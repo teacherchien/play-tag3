@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>友善不卡頓的鬼抓人遊戲</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1e1e1e;
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        h1 {
+            margin: 5px 0;
+            font-size: 24px;
+        }
+        #gameInfo {
+            font-size: 16px;
+            margin-bottom: 10px;
+            color: #aaaaaa;
+        }
+        #gameCanvas {
+            background-color: #2d2d2d;
+            border: 4px solid #444444;
+            border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .controls-tip {
+            margin-top: 15px;
+            display: flex;
+            gap: 40px;
+            font-size: 14px;
+            background: #333;
+            padding: 10px 20px;
+            border-radius: 20px;
+        }
+        .player1-tip { color: #ff4757; font-weight: bold; }
+        .player2-tip { color: #2ed573; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <h1>👻 雙人環形鬼抓人 🏃‍♂️</h1>
+    <div id="gameInfo">雙方皆可穿透地圖邊緣！友善安全，絕對不卡頓！</div>
+    
+    <canvas id="gameCanvas" width="800" height="500"></canvas>
+
+    <div class="controls-tip">
+        <div class="player1-tip">🔴 玩家 1 (鬼) 操控：W / A / S / D</div>
+        <div class="player2-tip">🟢 玩家 2 (人類) 操控：方向鍵 ↑ / ↓ / ← / →</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // 解決卡頓的核心：鍵盤狀態狀態機
+        const keys = {};
+
+        // 地圖上的障礙物：採「中置對稱小圓柱」設計，保留 100% 寬敞通道，絕無死角死胡同
+        const obstacles = [
+            { x: 200, y: 150, radius: 40 },
+            { x: 600, y: 150, radius: 40 },
+            { x: 200, y: 350, radius: 40 },
+            { x: 600, y: 350, radius: 40 },
+            { x: 400, y: 250, radius: 50 }
+        ];
+
+        // 玩家 1 屬性 (鬼 - 抓人的角色)
+        const p1 = {
+            x: 100,
+            y: 250,
+            radius: 18,
+            speed: 4.5,
+            color: "#ff4757",
+            label: "鬼"
+        };
+
+        // 玩家 2 屬性 (人類 - 逃跑的角色)
+        const p2 = {
+            x: 700,
+            y: 250,
+            radius: 16,
+            speed: 5.0, // 人類速度稍微快一點點，地圖寬敞更平衡
+            color: "#2ed573",
+            label: "人"
+        };
+
+        // 監聽鍵盤按下與放開
+        window.addEventListener("keydown", (e) => {
+            keys[e.key.toLowerCase()] = true;
+            keys[e.key] = true; // 同時支援方向鍵字串
+        });
+
+        window.addEventListener("keyup", (e) => {
+            keys[e.key.toLowerCase()] = false;
+            keys[e.key] = false;
+        });
+
+        // 圓形碰撞檢測常式
+        function checkCircleCollision(c1, c2) {
+            const dx = c1.x - c2.x;
+            const dy = c1.y - c2.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            return distance < (c1.radius + c2.radius);
+        }
+
+        // 玩家與所有障礙物的碰撞排斥演算（不卡牆秘訣）
+        function handleObstacleCollision(player) {
+            obstacles.forEach(obs => {
+                const dx = player.x - obs.x;
+                const dy = player.y - obs.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                const minDist = player.radius + obs.radius;
+
+                if (distance < minDist) {
+                    // 計算重疊深度並將玩家往外推，完全避免卡死在牆壁內部
+                    const overlap = minDist - distance;
+                    const pushX = (dx / distance) * overlap;
+                    const pushY = (dy / distance) * overlap;
+                    player.x += pushX;
+                    player.y += pushY;
+                }
+            });
+        }
+
+        // 環形無限邊緣穿透（最友善地圖機制）
+        function handleMapEdge(player) {
+            if (player.x < -player.radius) player.x = canvas.width + player.radius;
+            if (player.x > canvas.width + player.radius) player.x = -player.radius;
+            if (player.y < -player.radius) player.y = canvas.height + player.radius;
+            if (player.y > canvas.height + player.radius) player.y = -player.radius;
+        }
+
+        // 遊戲主邏輯更新
+        function update() {
+            // --- 玩家 1 (鬼) 移動控制 ---
+            let p1Dx = 0;
+            let p1Dy = 0;
+            if (keys['w']) p1Dy -= 1;
+            if (keys['s']) p1Dy += 1;
+            if (keys['a']) p1Dx -= 1;
+            if (keys['d']) p1Dx += 1;
+            
+            // 向量正規化，防止斜向移動速度加倍造成的卡頓感
+            if (p1Dx !== 0 || p1Dy !== 0) {
+                const length = Math.sqrt(p1Dx * p1Dx + p1Dy * p1Dy);
+                p1.x += (p1Dx / length) * p1.speed;
+                p1.y += (p1Dy / length) * p1.speed;
+            }
+
+            // --- 玩家 2 (人類) 移動控制 ---
+            let p2Dx = 0;
+            let p2Dy = 0;
+            if (keys['ArrowUp']) p2Dy -= 1;
+            if (keys['ArrowDown']) p2Dy += 1;
+            if (keys['ArrowLeft']) p2Dx -= 1;
+            if (keys['ArrowRight']) p2Dx += 1;
+
+            if (p2Dx !== 0 || p2Dy !== 0) {
+                const length = Math.sqrt(p2Dx * p2Dx + p2Dy * p2Dy);
+                p2.x += (p2Dx / length) * p2.speed;
+                p2.y += (p2Dy / length) * p2.speed;
+            }
+
+            // 處理碰撞與邊緣穿透
+            handleObstacleCollision(p1);
+            handleObstacleCollision(p2);
+            handleMapEdge(p1);
+            handleMapEdge(p2);
+
+            // 檢查鬼是否抓到人
+            if (checkCircleCollision(p1, p2)) {
+                // 抓到後重置位置，互換身分或重新開始（這裡採重置位置示範）
+                alert("👻 鬼抓到人了！點擊確定重新開始下一局。");
+                p1.x = 100; p1.y = 250;
+                p2.x = 700; p2.y = 250;
+                keys['w'] = keys['s'] = keys['a'] = keys['d'] = false;
+                keys['ArrowUp'] = keys['ArrowDown'] = keys['ArrowLeft'] = keys['ArrowRight'] = false;
+            }
+        }
+
+        // 畫面繪製
+        function draw() {
+            // 清空畫布
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 繪製背景網格線，增添空間感
+            ctx.strokeStyle = "#3a3a3a";
+            ctx.lineWidth = 1;
+            for(let x = 0; x < canvas.width; x += 40) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+            }
+            for(let y = 0; y < canvas.height; y += 40) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+            }
+
+            // 繪製友善障礙物（安全圓柱）
+            obstacles.forEach(obs => {
+                ctx.beginPath();
+                ctx.arc(obs.x, obs.y, obs.radius, 0, Math.PI * 2);
+                ctx.fillStyle = "#4e4e4e";
+                ctx.fill();
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = "#5f5f5f";
+                ctx.stroke();
+            });
+
+            // 繪製 玩家 1 (鬼)
+            ctx.beginPath();
+            ctx.arc(p1.x, p1.y, p1.radius, 0, Math.PI * 2);
+            ctx.fillStyle = p1.color;
+            ctx.fill();
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = p1.color;
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = "#ffffff";
+            ctx.stroke();
+            ctx.shadowBlur = 0; // 重置發光
+
+            // 繪製 玩家 2 (人)
+            ctx.beginPath();
+            ctx.arc(p2.x, p2.y, p2.radius, 0, Math.PI * 2);
+            ctx.fillStyle = p2.color;
+            ctx.fill();
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = p2.color;
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = "#ffffff";
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+
+            // 繪製文字標籤
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 12px sans-serif";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(p1.label, p1.x, p1.y);
+            ctx.fillText(p2.label, p2.x, p2.y);
+        }
+
+        // 遊戲核心迴圈：依據瀏覽器更新率(60Hz)執行，保證畫面絲滑、輸入不卡頓
+        function gameLoop() {
+            update();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        // 啟動遊戲
+        gameLoop();
+    </script>
+</body>
+</html>
